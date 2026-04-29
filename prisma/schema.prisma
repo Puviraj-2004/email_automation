@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model EmailAccount {
+  id        String   @id @default(uuid())
+  label     String
+  email     String   @unique
+  password  String
+  imapHost  String
+  imapPort  Int      @default(993)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  emails    Email[]
+  robotRuns RobotRun[]
+
+  @@map("email_accounts")
+}
+
+model Email {
+  id              String    @id @default(uuid())
+  accountId       String
+  messageId       String    @unique
+  subject         String
+  body            String    @db.Text
+  fromEmail       String
+  fromName        String?
+  receivedAt      DateTime
+  emailType       EmailType @default(OTHER)
+  expertRef       String?
+  sinistreRef     String?
+  immatriculation String?
+  insuredName     String?
+  companyName     String?
+  expertFirm      String?
+  createdAt       DateTime  @default(now())
+
+  account     EmailAccount      @relation(fields: [accountId], references: [id])
+  attachments EmailAttachment[]
+
+  @@index([accountId])
+  @@index([receivedAt])
+  @@index([sinistreRef])
+  @@index([immatriculation])
+  @@map("emails")
+}
+
+model EmailAttachment {
+  id        String   @id @default(uuid())
+  emailId   String
+  filename  String
+  filePath  String
+  publicUrl String
+  mimeType  String
+  fileSize  Int
+  createdAt DateTime @default(now())
+
+  email Email @relation(fields: [emailId], references: [id])
+
+  @@index([emailId])
+  @@map("email_attachments")
+}
+
+model RobotRun {
+  id            String    @id @default(uuid())
+  accountId     String
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  status        RunStatus @default(RUNNING)
+  emailsFetched Int       @default(0)
+  emailsSkipped Int       @default(0)
+  errorMessage  String?   @db.Text
+  fetchFrom     DateTime
+  fetchTo       DateTime
+
+  account EmailAccount @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([startedAt])
+  @@map("robot_runs")
+}
+
+enum EmailType {
+  PV_EXPERTISE
+  LETTRE
+  PEC
+  OTHER
+}
+
+enum RunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
