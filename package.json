@@ -10,8 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "lint": "eslint src --ext .ts",
-    "format": "prettier --write src"
+    "prisma:seed": "ts-node src/prisma/seed.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.10.0",

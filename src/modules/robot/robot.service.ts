@@ -5,7 +5,6 @@ import { accountService } from '../account';
 import { emailService } from '../email';
 import { robotRepository } from './robot.repository';
 
-// Fallback: how many days back to fetch on very first run ever
 const DEFAULT_FETCH_DAYS_BACK = 30;
 
 function daysAgo(days: number): Date {
@@ -16,38 +15,17 @@ function daysAgo(days: number): Date {
 }
 
 async function resolveFetchFrom(accountId: string): Promise<Date> {
-  // Priority 1: last successful robot run's fetchTo
   const lastRun = await robotRepository.findLastSuccessfulRun(accountId);
-  if (lastRun) {
-    logger.debug('[Robot] Using last robot run as fetchFrom', {
-      fetchFrom: lastRun.fetchTo,
-    });
-    return lastRun.fetchTo;
-  }
+  if (lastRun) return lastRun.fetchTo;
 
-  // Priority 2: last processed email's receivedAt
-  // Handles case where robot_runs was cleared but emails still exist
   const lastEmailDate = await robotRepository.findLastProcessedEmailDate(accountId);
-  if (lastEmailDate) {
-    logger.debug('[Robot] Using last email date as fetchFrom', {
-      fetchFrom: lastEmailDate,
-    });
-    return lastEmailDate;
-  }
+  if (lastEmailDate) return lastEmailDate;
 
-  // Priority 3: first time ever — go back DEFAULT_FETCH_DAYS_BACK days
-  const fallback = daysAgo(DEFAULT_FETCH_DAYS_BACK);
-  logger.debug('[Robot] No previous data found — using default fetchFrom', {
-    fetchFrom: fallback,
-    daysBack: DEFAULT_FETCH_DAYS_BACK,
-  });
-  return fallback;
+  return daysAgo(DEFAULT_FETCH_DAYS_BACK);
 }
 
 export const robotService = {
   async runAllAccounts(): Promise<void> {
-    logger.info('[Robot] Starting run for all active accounts');
-
     const accounts = await accountService.findAllActive();
 
     if (accounts.length === 0) {
@@ -56,6 +34,11 @@ export const robotService = {
     }
 
     const now = new Date();
+    let totalFetched = 0;
+    let totalSkipped = 0;
+    let totalFailed  = 0;
+
+    logger.info(`[Robot] Starting — ${accounts.length} account(s)`);
 
     for (const account of accounts) {
       let run = null;
@@ -63,20 +46,9 @@ export const robotService = {
         const fetchFrom = await resolveFetchFrom(account.id);
         const fetchTo   = now;
 
-        // Skip if window is too small (less than 1 minute)
-        // Prevents unnecessary IMAP connections
         if (fetchTo.getTime() - fetchFrom.getTime() < 60 * 1000) {
-          logger.debug('[Robot] Fetch window too small — skipping', {
-            account: account.email,
-          });
           continue;
         }
-
-        logger.info('[Robot] Processing account', {
-          account:   account.email,
-          fetchFrom: fetchFrom.toISOString(),
-          fetchTo:   fetchTo.toISOString(),
-        });
 
         run = await robotRepository.createRun(account.id, fetchFrom, fetchTo);
 
@@ -88,18 +60,18 @@ export const robotService = {
 
         await robotRepository.completeRun(run.id, 'SUCCESS', fetched, skipped);
 
-        logger.info('[Robot] Account run complete', {
-          account: account.email,
-          fetched,
-          skipped,
-        });
+        totalFetched += fetched;
+        totalSkipped += skipped;
+
+        // Only log if something happened
+        if (fetched > 0 || skipped > 0) {
+          logger.info(`[Robot] ${account.label} — fetched: ${fetched}, skipped: ${skipped}`);
+        }
 
       } catch (err) {
+        totalFailed++;
         const message = err instanceof Error ? err.message : String(err);
-        logger.error('[Robot] Account run failed', {
-          account: account.email,
-          error:   message,
-        });
+        logger.error(`[Robot] ${account.label} failed — ${message}`);
 
         if (run) {
           await robotRepository.completeRun(run.id, 'FAILED', 0, 0, message);
@@ -107,7 +79,8 @@ export const robotService = {
       }
     }
 
-    logger.info('[Robot] All accounts processed');
+    // Single summary line per run
+    logger.info(`[Robot] Done — fetched: ${totalFetched}, skipped: ${totalSkipped}, failed: ${totalFailed}`);
   },
 
   startScheduler(): void {
@@ -127,6 +100,6 @@ export const robotService = {
       }
     });
 
-    logger.info('[Robot] Scheduler started', { schedule });
+    logger.info(`[Robot] Scheduler started — ${schedule}`);
   },
 };

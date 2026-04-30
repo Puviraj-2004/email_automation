@@ -2,21 +2,28 @@ import Imap from 'imap';
 import { EmailAccount } from '@prisma/client';
 import { AppError, ErrorCode, logger } from '../shared';
 
-export function fetchEmailsFromAccount(
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 3000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function connectAndFetch(
   account: EmailAccount,
   fetchFrom: Date,
   fetchTo: Date,
 ): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
     const imap = new Imap({
-      user:     account.email,
-      password: account.password,
-      host:     account.imapHost,
-      port:     account.imapPort,
-      tls:      true,
+      user:       account.email,
+      password:   account.password,
+      host:       account.imapHost,
+      port:       account.imapPort,
+      tls:        true,
       tlsOptions: { rejectUnauthorized: false },
-      connTimeout: 15000,
-      authTimeout: 10000,
+      connTimeout: 20000,
+      authTimeout: 15000,
     });
 
     const rawEmails: Buffer[] = [];
@@ -29,12 +36,12 @@ export function fetchEmailsFromAccount(
 
     imap.once('ready', () => {
       imap.openBox('INBOX', true, (err) => {
-        if (err) return finish(new AppError(ErrorCode.IMAP_FETCH_FAILED, err.message));
+        if (err) {
+          return finish(new AppError(ErrorCode.IMAP_FETCH_FAILED, err.message));
+        }
 
-        // Use SINCE at day level to cast a wide net
-        // We filter precisely by timestamp AFTER parsing
         const sinceDate = new Date(fetchFrom);
-        sinceDate.setHours(0, 0, 0, 0); // Start of the same day
+        sinceDate.setHours(0, 0, 0, 0);
 
         imap.search([['SINCE', sinceDate]], (searchErr, uids) => {
           if (searchErr) {
@@ -42,18 +49,12 @@ export function fetchEmailsFromAccount(
           }
 
           if (!uids || uids.length === 0) {
-            logger.debug('[Fetcher] No emails found', { account: account.email });
             return finish();
           }
 
-          logger.debug('[Fetcher] Found emails to evaluate', {
-            account: account.email,
-            count: uids.length,
-          });
-
           const fetch = imap.fetch(uids, { bodies: '' });
           const chunks: Map<number, Buffer[]> = new Map();
-          const dates: Map<number, Date> = new Map();
+          const dates: Map<number, Date>      = new Map();
 
           fetch.on('message', (msg, seqno) => {
             chunks.set(seqno, []);
@@ -64,7 +65,6 @@ export function fetchEmailsFromAccount(
               });
             });
 
-            // Get the internal date from IMAP envelope for precise filtering
             msg.once('attributes', (attrs) => {
               if (attrs.date) {
                 dates.set(seqno, new Date(attrs.date));
@@ -75,20 +75,8 @@ export function fetchEmailsFromAccount(
               const emailDate = dates.get(seqno);
               const raw = Buffer.concat(chunks.get(seqno) ?? []);
 
-              // Precise time-based filter — only include emails in [fetchFrom, fetchTo]
               if (emailDate && emailDate >= fetchFrom && emailDate <= fetchTo) {
                 rawEmails.push(raw);
-                logger.debug('[Fetcher] Email in window', {
-                  account: account.email,
-                  date: emailDate.toISOString(),
-                });
-              } else {
-                logger.debug('[Fetcher] Email outside window — skipped', {
-                  account: account.email,
-                  date: emailDate?.toISOString(),
-                  fetchFrom: fetchFrom.toISOString(),
-                  fetchTo: fetchTo.toISOString(),
-                });
               }
             });
           });
@@ -108,4 +96,38 @@ export function fetchEmailsFromAccount(
 
     imap.connect();
   });
+}
+
+export async function fetchEmailsFromAccount(
+  account: EmailAccount,
+  fetchFrom: Date,
+  fetchTo: Date,
+): Promise<Buffer[]> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const emails = await connectAndFetch(account, fetchFrom, fetchTo);
+      return emails;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      const isConnReset = lastError.message.includes('ECONNRESET') ||
+                          lastError.message.includes('ETIMEDOUT') ||
+                          lastError.message.includes('ECONNREFUSED');
+
+      if (isConnReset && attempt < MAX_RETRIES) {
+        logger.warn(
+          `[Fetcher] ${account.label} connection error — retrying (${attempt}/${MAX_RETRIES})`,
+        );
+        await delay(RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      // Non-retryable error or max retries reached
+      break;
+    }
+  }
+
+  throw lastError ?? new AppError(ErrorCode.IMAP_CONNECTION_FAILED, 'Unknown error');
 }
