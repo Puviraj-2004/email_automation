@@ -6,6 +6,7 @@ import { isProcessableEmailSubject, parseEmail } from './email.parser';
 import { emailRepository } from './email.repository';
 import { accountRepository } from '../account/account.repository';
 import { EmailFilters } from './types';
+import { resolveImapConfig } from '../../config/imapHosts';
 
 export const emailService = {
   /**
@@ -23,8 +24,14 @@ export const emailService = {
       throw new AppError(ErrorCode.RECORD_NOT_FOUND, `Account not found: ${accountId}`);
     }
 
+    const imapConfig = resolveImapConfig(account.email);
     const rawEmails = await fetchEmailsFromAccount(
-      { ...account, password: decryptSecret(account.password) },
+      {
+        ...account,
+        password: decryptSecret(account.password),
+        imapHost: imapConfig.host,
+        imapPort: imapConfig.port,
+      },
       fetchFrom,
       fetchTo,
     );

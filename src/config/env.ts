@@ -1,5 +1,15 @@
 import { z } from 'zod';
 
+const optionalSecret = (minLength: number) =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') return value;
+      const trimmed = value.trim();
+      return trimmed === '' ? undefined : trimmed;
+    },
+    z.string().min(minLength).optional(),
+  );
+
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   PORT: z.string().default('4000').transform(Number),
@@ -7,8 +17,8 @@ const envSchema = z.object({
   UPLOADS_DIR: z.string().default('./uploads/emails'),
   PUBLIC_BASE_URL: z.string().url(),
   ROBOT_CRON_SCHEDULE: z.string().default('0 * * * *'),
-  API_KEY: z.string().min(24).optional(),
-  CREDENTIAL_ENCRYPTION_KEY: z.string().min(32).optional(),
+  API_KEY: optionalSecret(24),
+  CREDENTIAL_ENCRYPTION_KEY: optionalSecret(32),
 });
 
 const parsed = envSchema.safeParse(process.env);

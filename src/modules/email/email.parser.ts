@@ -4,17 +4,18 @@ import { logger } from '../shared';
 import { ParsedEmailData, ParsedAttachment } from './types';
 
 // ── Subject patterns ──────────────────────────────────────────────────────────
-const SUBJECT_EXPERT_REF   = /dossier\s+(\d+)/i;
-const SUBJECT_SINISTRE_REF = /(?:no\s+sinistre|ref\.?\s*sinistre)\s*[:\-]\s*([\w\d]+)/i;
-const SUBJECT_IMMAT        = /immatriculation\s*[:\-]\s*([A-Z0-9\-]+)/i;
-const PROCESSABLE_SUBJECT_PATTERN = /\b(immatriculation|immat|no\s+sinistre|no\s+mission|nr[ée]f\s+mission)\b/i;
+const SUBJECT_EXPERT_REF   = /(?:dossier\s+|nr[ée]f\s+mission\s*[:\-]\s*)([\w\d\-]+)/i;
+const SUBJECT_SINISTRE_REF = /(?:n[o°]\.?\s*sinistre|ref\.?\s*sinistre|\/sinistre)\s*[:\-]?\s*([\w\d]+)/i;
+const SUBJECT_IMMAT        = /(?:immatriculation|immat)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-]{4,8})/i;
+const SUBJECT_FR_PLATE     = /\b([A-Z]{2}-\d{3}-[A-Z]{2})\b/i;
+const PROCESSABLE_SUBJECT_PATTERN = /\b(immatriculation|immat|no\s+sinistre|n°\s*sinistre|no\s+mission|nr[ée]f\s+mission)\b/i;
 
 // ── Body patterns ─────────────────────────────────────────────────────────────
 const BODY_EXPERT_REF   = /ref\.?\s*expert\s*[:\-]\s*(\d+)/i;
-const BODY_SINISTRE_REF = /(?:ref\.?\s*sinistre|claim\s*ref)\s*[:\-]\s*([\w\d]+)/i;
-const BODY_IMMAT        = /(?:immat\.|registration\s*number)\s*[:\-]\s*([A-Z0-9]+)/i;
-const BODY_INSURED      = /(?:assuré|insured)\s*[:\-]\s*([^\n\r]+)/i;
-const BODY_COMPANY      = /(?:compagnie|company)\s*[:\-]\s*([^\n\r]+)/i;
+const BODY_SINISTRE_REF = /(?:ref\.?\s*sinistre|claim\s*ref|n[o°]\.?\s*sinistre)\s*[:\-]?\s*([\w\d]+)/i;
+const BODY_IMMAT        = /(?:immatriculation|immat\.?)\s*[:\-]\s*([A-Z0-9][A-Z0-9\-]{4,8})/i;
+const BODY_INSURED      = /(?:assuré|assure|insured)\s*[:\-]\s*([^\n\r]+)/i;
+const BODY_COMPANY      = /(?:compagnie|company|assureur)\s*[:\-]\s*([^\n\r]+)/i;
 
 function extract(text: string, pattern: RegExp): string | null {
   const m = text.match(pattern);
@@ -24,7 +25,7 @@ function extract(text: string, pattern: RegExp): string | null {
 function detectType(subject: string): EmailType {
   const s = subject.toLowerCase();
 
-  if (s.includes("p.v d'expertise") || s.includes('procès verbal')) {
+  if (s.includes('p.v') || s.includes("p.v d'expertise") || s.includes('procès verbal') || s.includes('proces verbal') || s.includes('rapport')) {
     return 'PV_EXPERTISE' as EmailType;
   }
   if (s.includes('lettre') || s.includes('letter')) {
@@ -61,7 +62,8 @@ export async function parseEmail(rawBuffer: Buffer): Promise<ParsedEmailData> {
 
   const expertRef       = extract(subject, SUBJECT_EXPERT_REF)   ?? extract(body, BODY_EXPERT_REF);
   const sinistreRef     = extract(subject, SUBJECT_SINISTRE_REF) ?? extract(body, BODY_SINISTRE_REF);
-  const rawImmat        = extract(subject, SUBJECT_IMMAT)        ?? extract(body, BODY_IMMAT);
+  const rawImmat        = extract(subject, SUBJECT_IMMAT)        ?? extract(body, BODY_IMMAT)
+                       ?? extract(subject, SUBJECT_FR_PLATE);
   const immatriculation = rawImmat ? rawImmat.replace(/-/g, '') : null;
   const insuredName     = extract(body, BODY_INSURED)?.slice(0, 100) ?? null;
   const companyName     = extract(body, BODY_COMPANY)?.slice(0, 100) ?? null;

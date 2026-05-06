@@ -2,11 +2,12 @@ interface ImapHostConfig {
   host: string;
   port: number;
   tls: boolean;
+  tlsServername?: string;
 }
 
 const IMAP_HOST_MAP: Record<string, ImapHostConfig> = {
-  'gopservices.fr': { host: 'mail.gopservices.fr', port: 993, tls: true },
-  'garage-ravier.fr': { host: 'mail.garage-ravier.fr', port: 993, tls: true },
+  'gopservices.fr': { host: 'mail.gopservices.fr', port: 993, tls: true, tlsServername: 'securemail.pro' },
+  'garage-ravier.fr': { host: 'mail.garage-ravier.fr', port: 993, tls: true, tlsServername: 'securemail.pro' },
   'gmail.com': { host: 'imap.gmail.com', port: 993, tls: true },
   'outlook.com': { host: 'outlook.office365.com', port: 993, tls: true },
   'hotmail.com': { host: 'outlook.office365.com', port: 993, tls: true },

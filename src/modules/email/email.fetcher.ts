@@ -1,5 +1,6 @@
 import Imap from 'imap';
 import { EmailAccount } from '@prisma/client';
+import { resolveImapConfig } from '../../config/imapHosts';
 import { AppError, ErrorCode, logger } from '../shared';
 
 const MAX_RETRIES = 3;
@@ -15,13 +16,17 @@ function connectAndFetch(
   fetchTo: Date,
 ): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
+    const imapConfig = resolveImapConfig(account.email);
     const imap = new Imap({
       user:       account.email,
       password:   account.password,
-      host:       account.imapHost,
-      port:       account.imapPort,
+      host:       imapConfig.host,
+      port:       imapConfig.port,
       tls:        true,
-      tlsOptions: { rejectUnauthorized: true },
+      tlsOptions: {
+        rejectUnauthorized: true,
+        ...(imapConfig.tlsServername && { servername: imapConfig.tlsServername }),
+      },
       connTimeout: 20000,
       authTimeout: 15000,
     });
