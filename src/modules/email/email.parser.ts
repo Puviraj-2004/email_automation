@@ -7,6 +7,7 @@ import { ParsedEmailData, ParsedAttachment } from './types';
 const SUBJECT_EXPERT_REF   = /dossier\s+(\d+)/i;
 const SUBJECT_SINISTRE_REF = /(?:no\s+sinistre|ref\.?\s*sinistre)\s*[:\-]\s*([\w\d]+)/i;
 const SUBJECT_IMMAT        = /immatriculation\s*[:\-]\s*([A-Z0-9\-]+)/i;
+const PROCESSABLE_SUBJECT_PATTERN = /\b(immatriculation|immat|no\s+sinistre|no\s+mission|nr[ée]f\s+mission)\b/i;
 
 // ── Body patterns ─────────────────────────────────────────────────────────────
 const BODY_EXPERT_REF   = /ref\.?\s*expert\s*[:\-]\s*(\d+)/i;
@@ -38,6 +39,10 @@ function detectType(subject: string): EmailType {
 function extractExpertFirm(body: string, fromName: string | null): string | null {
   const m = body.match(/(?:de\s*:|from\s*:)\s*([A-Z][A-Z\s\-]+?)(?:<|\n)/i);
   return m ? m[1].trim() : fromName;
+}
+
+export function isProcessableEmailSubject(subject: string): boolean {
+  return PROCESSABLE_SUBJECT_PATTERN.test(subject.normalize('NFC'));
 }
 
 export async function parseEmail(rawBuffer: Buffer): Promise<ParsedEmailData> {

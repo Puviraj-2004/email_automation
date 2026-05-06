@@ -1,10 +1,11 @@
 import { Email } from '@prisma/client';
-import { AppError, ErrorCode, logger } from '../shared';
+import { AppError, ErrorCode, decryptSecret, logger } from '../shared';
 import { attachmentService } from '../attachment';
 import { fetchEmailsFromAccount } from './email.fetcher';
-import { parseEmail } from './email.parser';
+import { isProcessableEmailSubject, parseEmail } from './email.parser';
 import { emailRepository } from './email.repository';
 import { accountRepository } from '../account/account.repository';
+import { EmailFilters } from './types';
 
 export const emailService = {
   /**
@@ -22,7 +23,11 @@ export const emailService = {
       throw new AppError(ErrorCode.RECORD_NOT_FOUND, `Account not found: ${accountId}`);
     }
 
-    const rawEmails = await fetchEmailsFromAccount(account, fetchFrom, fetchTo);
+    const rawEmails = await fetchEmailsFromAccount(
+      { ...account, password: decryptSecret(account.password) },
+      fetchFrom,
+      fetchTo,
+    );
 
     let fetched = 0;
     let skipped = 0;
@@ -30,6 +35,15 @@ export const emailService = {
     for (const raw of rawEmails) {
       try {
         const parsed = await parseEmail(raw);
+
+        if (!isProcessableEmailSubject(parsed.subject)) {
+          skipped++;
+          logger.debug('[EmailService] Skipping non-processable email', {
+            messageId: parsed.messageId,
+            subject: parsed.subject,
+          });
+          continue;
+        }
 
         // Deduplication — skip if already stored
         const exists = await emailRepository.existsByMessageId(parsed.messageId);
@@ -70,7 +84,7 @@ export const emailService = {
     return { fetched, skipped };
   },
 
-  async findAll(filters?: { accountId?: string; emailType?: string; sinistreRef?: string }): Promise<Email[]> {
+  async findAll(filters?: EmailFilters): Promise<Email[]> {
     return emailRepository.findAll(filters);
   },
 

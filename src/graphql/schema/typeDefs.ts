@@ -69,10 +69,10 @@ export const typeDefs = `#graphql
     emailAccounts: [EmailAccount!]!
     emailAccount(id: String!): EmailAccount
 
-    emails(accountId: String, emailType: String, sinistreRef: String): [Email!]!
+    emails(accountId: String, emailType: EmailType, sinistreRef: String, limit: Int, offset: Int): [Email!]!
     email(id: String!): Email
 
-    robotRuns: [RobotRun!]!
+    robotRuns(limit: Int, offset: Int): [RobotRun!]!
   }
 
   type Mutation {

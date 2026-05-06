@@ -1,393 +1,263 @@
 # Email Automation System
 
-An automated email fetching and processing robot built for **GOP Services**.
+Automated email retrieval and processing service for GOP Services.
 
-The system connects to multiple professional IMAP mailboxes, fetches new emails on a scheduled basis, extracts structured data from subjects and bodies, stores attachments locally, and exposes everything through a GraphQL API.
+The service connects to configured IMAP mailboxes, fetches recent emails, keeps only business-relevant messages, extracts structured fields, stores attachments locally, and exposes the data through a protected GraphQL API.
 
----
+## Current Production Rules
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Database Schema](#database-schema)
-- [How the Robot Works](#how-the-robot-works)
-- [Email Types & Parsing](#email-types--parsing)
-- [Setup & Installation](#setup--installation)
-- [Environment Variables](#environment-variables)
-- [Database Setup](#database-setup)
-- [Running the Project](#running-the-project)
-- [GraphQL API](#graphql-api)
-- [Attachment API](#attachment-api)
-- [Adding a New Email Domain](#adding-a-new-email-domain)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Overview
-
-GOP Services receives emails daily from multiple insurance expert firms such as Alliance Experts, Expertizen, FEA, IDEA, and others. These emails contain vehicle damage reports, case letters, and support forms.
-
-This system automates the entire process:
-
-1. Connects to each mailbox via IMAP
-2. Fetches only new emails since the last run
-3. Parses and classifies each email by type
-4. Extracts key fields from the subject and body
-5. Saves PDF attachments to local storage
-6. Stores all data in PostgreSQL
-7. Exposes the data via GraphQL
-
----
+- Only emails whose subject contains one of the following are stored:
+  - `Immatriculation`
+  - `Immat`
+  - `No Sinistre`
+  - `No Mission`
+  - `Nref Mission` or `Nref Mission` with accent: `Nréf Mission`
+- On first launch or fallback, the robot fetches a maximum of the last 2 days.
+- GraphQL and attachment routes require an API key when `API_KEY` is configured.
+- Mailbox passwords are encrypted when `CREDENTIAL_ENCRYPTION_KEY` is configured.
+- PostgreSQL is provided through Docker Compose with credentials read from environment variables.
 
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
-| Runtime | Node.js + TypeScript (strict mode) |
-| API | Apollo Server (GraphQL) |
-| File Serving | Express (REST) |
+| --- | --- |
+| Runtime | Node.js + TypeScript |
+| API | Apollo Server + GraphQL |
+| REST | Express |
 | ORM | Prisma |
 | Database | PostgreSQL |
-| Email | node-imap + mailparser |
+| Email | imap + mailparser |
 | Scheduler | node-cron |
 | Logging | Winston |
 | Validation | Zod |
-
----
+| Tests | Node test runner |
 
 ## Project Structure
 
-```
+```text
 email-automation-system/
-├── prisma/
-│   ├── migrations/          # Auto-generated database migrations
-│   └── schema.prisma        # Database models and relations
-├── src/
-│   ├── config/
-│   │   ├── env.ts           # Zod-validated environment config
-│   │   └── imapHosts.ts     # Maps email domains to IMAP servers
-│   ├── graphql/
-│   │   ├── resolvers/
-│   │   │   └── resolvers.ts # GraphQL query and mutation resolvers
-│   │   └── schema/
-│   │       └── typeDefs.ts  # GraphQL type definitions
-│   ├── modules/
-│   │   ├── account/         # Email account management
-│   │   │   ├── account.repository.ts
-│   │   │   ├── account.service.ts
-│   │   │   ├── index.ts
-│   │   │   └── types.ts
-│   │   ├── attachment/      # File saving and path building
-│   │   │   ├── attachment.service.ts
-│   │   │   ├── index.ts
-│   │   │   └── types.ts
-│   │   ├── email/           # IMAP fetching, parsing, deduplication
-│   │   │   ├── email.fetcher.ts
-│   │   │   ├── email.parser.ts
-│   │   │   ├── email.repository.ts
-│   │   │   ├── email.service.ts
-│   │   │   ├── index.ts
-│   │   │   └── types.ts
-│   │   ├── robot/           # Scheduler and run tracker
-│   │   │   ├── index.ts
-│   │   │   ├── robot.repository.ts
-│   │   │   └── robot.service.ts
-│   │   └── shared/          # Logger, errors, helpers
-│   │       ├── AppError.ts
-│   │       ├── helpers.ts
-│   │       ├── index.ts
-│   │       └── logger.ts
-│   ├── prisma/
-│   │   └── client.ts        # Prisma singleton
-│   ├── rest/
-│   │   └── documents.route.ts # File serving endpoint
-│   ├── index.ts             # App entry point
-│   └── server.ts            # Apollo + Express setup
-├── uploads/
-│   └── emails/              # PDF attachments stored by date
-│       └── YYYY-MM-DD/
-├── logs/                    # Auto-generated log files
-│   ├── combined.log
-│   └── error.log
-├── .env.example             # Environment variable template
-├── .gitignore
-├── package.json
-├── README.md
-└── tsconfig.json
+  prisma/
+    migrations/
+    schema.prisma
+  src/
+    config/
+      env.ts
+      imapHosts.ts
+    graphql/
+      resolvers/
+      schema/
+    modules/
+      account/
+      attachment/
+      email/
+      robot/
+      shared/
+    prisma/
+      client.ts
+    rest/
+      documents.route.ts
+    index.ts
+    server.ts
+  docker-compose.yml
+  changes.md
+  package.json
+  Readme.md
 ```
 
----
+## Prerequisites
 
-## Database Schema
+- Node.js 20 or newer recommended
+- npm
+- Docker Desktop, for local PostgreSQL
 
-```
-EmailAccount          Email                  EmailAttachment
-─────────────         ──────────────────     ───────────────
-id (PK)               id (PK)                id (PK)
-label                 accountId (FK)         emailId (FK)
-email (unique)        messageId (unique)     filename
-password              subject                filePath
-imapHost              body                   publicUrl
-imapPort              fromEmail              mimeType
-isActive              fromName               fileSize
-createdAt             receivedAt             createdAt
-updatedAt             emailType
-                      expertRef              RobotRun
-                      sinistreRef            ────────────────
-                      immatriculation        id (PK)
-                      insuredName            accountId (FK)
-                      companyName            startedAt
-                      expertFirm             finishedAt
-                      createdAt              status
-                                             emailsFetched
-                                             emailsSkipped
-                                             errorMessage
-                                             fetchFrom
-                                             fetchTo
+## Environment Setup
+
+Create `.env` from the example:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-### Email Types
+Database environment example:
 
-| Enum | Description | Subject Pattern |
-|---|---|---|
-| `PV_EXPERTISE` | Damage assessment report | `P.V d'Expertise du dossier...` |
-| `LETTRE` | Expert letter | `Lettre du dossier...` |
-| `PEC` | Prise en charge / support form | `PEC du dossier...` |
-| `OTHER` | Any other email | anything else |
-
----
-
-## How the Robot Works
-
-```
-Scheduler triggers (every N minutes)
-         │
-         ▼
-For each active EmailAccount:
-         │
-         ├─ Get fetchFrom (3-level priority):
-         │     1. Last successful RobotRun.fetchTo
-         │     2. Last stored Email.receivedAt
-         │     3. 30 days ago (first run fallback)
-         │
-         ├─ fetchTo = now
-         │
-         ├─ Connect to IMAP server
-         │
-         ├─ Search emails SINCE day of fetchFrom
-         │
-         ├─ For each email found:
-         │     ├─ Check internal date is in [fetchFrom, fetchTo]
-         │     ├─ Check messageId not already in database (dedup)
-         │     ├─ Parse subject + body → extract fields
-         │     ├─ Save attachments to uploads/emails/YYYY-MM-DD/
-         │     └─ Store Email + EmailAttachment records
-         │
-         └─ Save RobotRun record (SUCCESS or FAILED)
+```env
+POSTGRES_USER="postgres"
+POSTGRES_PASSWORD="replace-with-a-strong-postgres-password"
+POSTGRES_DB="email_automation"
+POSTGRES_PORT="5436"
+DATABASE_URL="postgresql://postgres:replace-with-a-strong-postgres-password@localhost:5436/email_automation"
 ```
 
-### Fetch Window Logic
+Important variables:
 
-The robot always remembers where it stopped using the `RobotRun` table.
+| Variable | Required | Description |
+| --- | --- | --- |
+| `POSTGRES_USER` | Docker | PostgreSQL user for Docker Compose |
+| `POSTGRES_PASSWORD` | Docker | PostgreSQL password for Docker Compose |
+| `POSTGRES_DB` | Docker | PostgreSQL database name for Docker Compose |
+| `POSTGRES_PORT` | Docker | Host port bound to PostgreSQL, default `5436` |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `PORT` | No | API server port, default `4000` |
+| `NODE_ENV` | No | `development`, `test`, or `production` |
+| `UPLOADS_DIR` | No | Attachment storage directory |
+| `PUBLIC_BASE_URL` | Yes | Base URL used for attachment links |
+| `ROBOT_CRON_SCHEDULE` | No | Robot cron schedule |
+| `API_KEY` | Production | API key for GraphQL and attachment routes |
+| `CREDENTIAL_ENCRYPTION_KEY` | Production | Secret used to encrypt mailbox passwords |
+| `SEED_EMAIL_ACCOUNTS_JSON` | No | Optional JSON array for local seeding |
 
-```
-Run 1:  fetchFrom = 30 days ago   →  fetchTo = 08:00
-Run 2:  fetchFrom = 08:00         →  fetchTo = 12:00
-Run 3:  fetchFrom = 12:00         →  fetchTo = 12:15
-```
+In production, `API_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, and database credentials must be provided as deployment secrets. Do not commit a real `.env` file.
 
-Even if you delete email records, the robot uses the last `RobotRun.fetchTo`
-as the starting point for the next run. If you also delete robot runs, it
-falls back to the last email date, and if no emails exist either, it goes
-back 30 days automatically.
+## Run PostgreSQL With Docker
 
----
+Start PostgreSQL:
 
-## Email Types & Parsing
-
-### Fields extracted from subject
-
-```
-Subject: P.V d'Expertise du dossier 26045294 - No Sinistre : 101261144628 - Immatriculation : HH-370-CA
-                                      ^^^^^^^^                 ^^^^^^^^^^^^                   ^^^^^^^^^
-                                      expertRef                sinistreRef                    immatriculation
-```
-
-### Fields extracted from body
-
-```
----------- REFERENCES DOSSIER --------------------
-Ref. Expert      : 26045294              → expertRef
-Ref. Sinistre    : 101261144628          → sinistreRef
-Immat.           : HH370CA              → immatriculation
-Assuré           : BUSINESS EQUITIES    → insuredName
-Compagnie        : ASSURANCES DU CREDIT MUTU → companyName
---------------------------------------------------
-De : ALLIANCE EXPERTS IDF               → expertFirm
+```powershell
+docker compose up -d
 ```
 
----
+The Compose file reads `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `POSTGRES_PORT` from `.env`. The default port mapping binds PostgreSQL to `127.0.0.1`, so it is reachable from the host machine but not exposed on all network interfaces.
 
-## Setup & Installation
+For a real production server, prefer a managed PostgreSQL service or a private Docker network without publishing the database port publicly. If you keep PostgreSQL in Docker, use strong secrets from your deployment platform and restrict network access with firewall rules.
 
-### Prerequisites
+Check container status:
 
-- Node.js v18 or higher
-- PostgreSQL v14 or higher
-- npm v9 or higher
+```powershell
+docker compose ps
+```
 
-### 1. Clone and install
+View database logs:
 
-```bash
-git clone <repository-url>
-cd email-automation-system
+```powershell
+docker compose logs -f postgres
+```
+
+Stop PostgreSQL:
+
+```powershell
+docker compose down
+```
+
+Stop PostgreSQL and remove local database data:
+
+```powershell
+docker compose down -v
+```
+
+## Install And Prepare Database
+
+Install dependencies:
+
+```powershell
 npm install
 ```
 
-### 2. Configure environment
+Generate Prisma client:
 
-```bash
-cp .env.example .env
+```powershell
+npm run prisma:generate
 ```
 
-Open `.env` and fill in all values. See [Environment Variables](#environment-variables).
+Run local migrations:
 
-### 3. Set up database
-
-```bash
-npx prisma migrate dev --name init
-npx prisma generate
+```powershell
+npm run prisma:migrate
 ```
 
-### 4. Add email accounts
+For production deployments, use:
 
-Add each mailbox via the GraphQL API after starting the server.
-See [GraphQL API — Add an email account](#mutations).
-
-### 5. Start the server
-
-```bash
-# Development (auto-restarts on file changes)
-npm run dev
-
-# Production
-npm run build
-npm start
+```powershell
+npx prisma migrate deploy
 ```
 
----
+Open Prisma Studio:
 
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
-| `PORT` | ❌ | `4000` | Server port |
-| `NODE_ENV` | ❌ | `development` | `development` or `production` |
-| `UPLOADS_DIR` | ❌ | `./uploads/emails` | Where attachments are stored |
-| `PUBLIC_BASE_URL` | ✅ | — | Base URL for attachment links |
-| `ROBOT_CRON_SCHEDULE` | ❌ | `0 * * * *` | Cron schedule for the robot |
-
-### Example `.env`
-
-```env
-DATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/email_automation"
-PORT=4000
-NODE_ENV=development
-UPLOADS_DIR=./uploads/emails
-PUBLIC_BASE_URL=http://localhost:4000
-ROBOT_CRON_SCHEDULE="*/15 * * * *"
-```
-
-### Cron Schedule Examples
-
-| Value | Meaning |
-|---|---|
-| `"*/15 * * * *"` | Every 15 minutes |
-| `"*/30 * * * *"` | Every 30 minutes |
-| `"0 * * * *"` | Every hour |
-| `"0 8-18 * * 1-5"` | Every hour, 8am–6pm, weekdays only |
-
----
-
-## Database Setup
-
-```bash
-# Create and apply migrations
-npx prisma migrate dev --name init
-
-# Regenerate Prisma client after schema changes
-npx prisma generate
-
-# Open Prisma Studio (visual database browser)
+```powershell
 npm run prisma:studio
 ```
 
----
+## Run The App Locally
 
-## Running the Project
+Development mode:
 
-```bash
-# Development with auto-restart
+```powershell
 npm run dev
+```
 
-# Build for production
+Build:
+
+```powershell
 npm run build
+```
 
-# Start production build
+Run built app:
+
+```powershell
 npm start
-
-# Database tools
-npx prisma migrate dev     # Run new migrations
-npx prisma generate        # Regenerate Prisma client
-npm run prisma:studio      # Open visual DB browser
 ```
 
----
+Run tests:
 
-## GraphQL API
-
-Open the GraphQL sandbox at:
-```
-http://localhost:4000/graphql
+```powershell
+npm test
 ```
 
-### Queries
+Health check:
 
-#### List all email accounts
+```text
+GET http://localhost:4000/health
+```
+
+## API Access
+
+GraphQL endpoint:
+
+```text
+POST http://localhost:4000/graphql
+```
+
+If `API_KEY` is configured, send one of these headers:
+
+```text
+x-api-key: your-api-key
+```
+
+or:
+
+```text
+Authorization: Bearer your-api-key
+```
+
+## GraphQL Examples
+
+Create an email account:
+
 ```graphql
-query {
-  emailAccounts {
+mutation {
+  createEmailAccount(
+    label: "Gonesse"
+    email: "gonesse@gopservices.fr"
+    password: "mailbox-password"
+  ) {
     id
     label
     email
     imapHost
-    isActive
-    createdAt
+    imapPort
   }
 }
 ```
 
-#### List all emails with filters
+List emails with pagination:
+
 ```graphql
 query {
-  emails(
-    accountId: "uuid-here"
-    emailType: "PV_EXPERTISE"
-    sinistreRef: "101261144628"
-  ) {
+  emails(limit: 50, offset: 0) {
     id
     subject
     emailType
-    expertRef
     sinistreRef
     immatriculation
-    insuredName
-    companyName
-    expertFirm
-    fromEmail
     receivedAt
     attachments {
       filename
@@ -399,33 +269,19 @@ query {
 }
 ```
 
-#### Get a single email
+Trigger the robot manually:
+
 ```graphql
-query {
-  email(id: "uuid-here") {
-    id
-    subject
-    body
-    emailType
-    expertRef
-    sinistreRef
-    immatriculation
-    insuredName
-    companyName
-    expertFirm
-    receivedAt
-    attachments {
-      filename
-      publicUrl
-    }
-  }
+mutation {
+  triggerRobot
 }
 ```
 
-#### List all robot runs
+List robot runs:
+
 ```graphql
 query {
-  robotRuns {
+  robotRuns(limit: 20, offset: 0) {
     id
     status
     emailsFetched
@@ -439,151 +295,77 @@ query {
 }
 ```
 
-### Mutations
+## Attachment URLs
 
-#### Add an email account
-```graphql
-mutation {
-  createEmailAccount(
-    label: "Gonesse"
-    email: "gonesse@gopservices.fr"
-    password: "password_here"
-  ) {
-    id
-    label
-    email
-    imapHost
-    imapPort
-  }
-}
-```
+Attachments are served from:
 
-#### Update an account
-```graphql
-mutation {
-  updateEmailAccount(
-    id: "uuid-here"
-    isActive: false
-  ) {
-    id
-    label
-    isActive
-  }
-}
-```
-
-#### Delete an account
-```graphql
-mutation {
-  deleteEmailAccount(id: "uuid-here")
-}
-```
-
-#### Trigger the robot manually
-```graphql
-mutation {
-  triggerRobot
-}
-```
-
----
-
-## Attachment API
-
-Attachments are served via a public REST endpoint:
-
-```
+```text
 GET /public/emails/documents/:date/:filename
 ```
 
-### Example
+Example:
 
-```
+```text
 http://localhost:4000/public/emails/documents/2026-04-24/20260424-140800-rapport.pdf
 ```
 
-The `publicUrl` field on each attachment contains the full ready-to-use URL.
+This route is protected by the same API-key middleware when `API_KEY` is configured.
 
----
+## Optional Local Seeding
 
-## Adding a New Email Domain
+The seed script no longer contains hardcoded mailbox credentials.
 
-When a new email account uses a domain not yet configured, open
-`src/config/imapHosts.ts` and add the domain:
+Set `SEED_EMAIL_ACCOUNTS_JSON` in `.env` as a JSON array:
 
-```typescript
-const IMAP_HOST_MAP: Record<string, ImapHostConfig> = {
-  'gopservices.fr':   { host: 'mail.gopservices.fr',   port: 993, tls: true },
-  'garage-ravier.fr': { host: 'mail.garage-ravier.fr', port: 993, tls: true },
-  'gmail.com':        { host: 'imap.gmail.com',        port: 993, tls: true },
-  'outlook.com':      { host: 'outlook.office365.com', port: 993, tls: true },
-  // Add new domain here:
-  'newdomain.fr':     { host: 'mail.newdomain.fr',     port: 993, tls: true },
+```env
+SEED_EMAIL_ACCOUNTS_JSON='[{"label":"Demo","email":"demo@example.com","password":"mailbox-password"}]'
+```
+
+Then run:
+
+```powershell
+npm run prisma:seed
+```
+
+Passwords are encrypted before storage when `CREDENTIAL_ENCRYPTION_KEY` is configured.
+
+## Add A New IMAP Domain
+
+If an email domain is not supported, add it in `src/config/imapHosts.ts`:
+
+```ts
+const IMAP_HOST_MAP = {
+  'gopservices.fr': { host: 'mail.gopservices.fr', port: 993, tls: true },
+  'newdomain.fr': { host: 'mail.newdomain.fr', port: 993, tls: true },
 };
 ```
 
----
-
 ## Troubleshooting
 
-### Robot fetches nothing on first run after deleting records
+Database connection fails:
 
-The robot uses a 3-level priority to determine where to start fetching:
+- Make sure Docker is running.
+- Start PostgreSQL with `docker compose up -d`.
+- Confirm `.env` uses port `5436`.
+- Run migrations with `npm run prisma:migrate`.
 
-1. Last successful `RobotRun.fetchTo`
-2. Last stored `Email.receivedAt`
-3. 30 days ago (first run fallback)
+API returns `Unauthorized`:
 
-If you delete both emails and robot runs, it will automatically go back
-30 days. No manual intervention needed.
+- Send `x-api-key` or `Authorization: Bearer <key>`.
+- Make sure the key matches `API_KEY` in `.env`.
 
-### IMAP connection refused
+Robot stores no emails:
 
-- Check that `imapHost` is correct for the email domain in `imapHosts.ts`
-- Verify the password is correct
-- Make sure IMAP access is enabled in the email provider settings
-- For Gmail: enable **App Passwords** in your Google Account security settings
+- Confirm the email subject contains one of the allowed keywords.
+- Confirm the email date is within the last 2 days on first/fallback runs.
+- Confirm the mailbox domain exists in `src/config/imapHosts.ts`.
 
-### Database connection error
+IMAP connection fails:
 
-```
-Error: P1010 — User was denied access
-```
+- Confirm mailbox credentials.
+- Confirm IMAP access is enabled for the provider.
+- Confirm the IMAP host and port are correct.
 
-Check your `DATABASE_URL` in `.env`. Make sure:
-- The username and password are correct
-- The database `email_automation` exists
-- PostgreSQL is running
+## Branch Notes
 
-Create the database if it does not exist:
-
-```bash
-psql -U postgres -c "CREATE DATABASE email_automation;"
-```
-
-### Emails parsed but all fields are null
-
-The email does not match the expected format. The parser expects subjects like:
-
-```
-P.V d'Expertise du dossier 26045294 - No Sinistre : 101261144628 - Immatriculation : HH-370-CA
-```
-
-And body blocks like:
-
-```
-Ref. Expert      : 26045294
-Ref. Sinistre    : 101261144628
-Immat.           : HH370CA
-Assuré           : BUSINESS EQUITIES
-Compagnie        : ASSURANCES DU CREDIT MUTU
-```
-
-If the format is different, update the regex patterns in
-`src/modules/email/email.parser.ts`.
-
-### Dates showing as timestamps instead of ISO strings
-
-Make sure your `src/graphql/resolvers/resolvers.ts` includes the
-field-level date resolvers for `Email`, `RobotRun`, `EmailAccount`,
-and `EmailAttachment` types.
+See `changes.md` for a summary of what changed in the `Test-2` branch.

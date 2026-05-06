@@ -22,3 +22,11 @@ export interface ParsedAttachment {
   content: Buffer;
   mimeType: string;
 }
+
+export interface EmailFilters {
+  accountId?: string;
+  emailType?: EmailType;
+  sinistreRef?: string;
+  limit?: number;
+  offset?: number;
+}

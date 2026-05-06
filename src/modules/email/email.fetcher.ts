@@ -21,7 +21,7 @@ function connectAndFetch(
       host:       account.imapHost,
       port:       account.imapPort,
       tls:        true,
-      tlsOptions: { rejectUnauthorized: false },
+      tlsOptions: { rejectUnauthorized: true },
       connTimeout: 20000,
       authTimeout: 15000,
     });

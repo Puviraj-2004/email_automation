@@ -45,7 +45,11 @@ export const robotRepository = {
     return email ? email.receivedAt : null;
   },
 
-  async findAll(): Promise<RobotRun[]> {
-    return prisma.robotRun.findMany({ orderBy: { startedAt: 'desc' } });
+  async findAll(pagination?: { limit?: number; offset?: number }): Promise<RobotRun[]> {
+    return prisma.robotRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: pagination?.limit ?? 50,
+      skip: pagination?.offset ?? 0,
+    });
   },
 };

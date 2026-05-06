@@ -6,3 +6,4 @@ export {
   sanitizeFilename,
   buildUploadDirPath,
 } from './helpers';
+export { encryptSecret, decryptSecret, requireApiKey } from './security';

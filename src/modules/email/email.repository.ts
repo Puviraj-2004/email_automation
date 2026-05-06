@@ -1,6 +1,6 @@
 import { Email } from '@prisma/client';
 import prisma from '../../prisma/client';
-import { ParsedEmailData } from './types';
+import { EmailFilters, ParsedEmailData } from './types';
 
 export const emailRepository = {
   async create(accountId: string, data: ParsedEmailData): Promise<Email> {
@@ -29,15 +29,17 @@ export const emailRepository = {
     return count > 0;
   },
 
-  async findAll(filters?: { accountId?: string; emailType?: string; sinistreRef?: string }): Promise<Email[]> {
+  async findAll(filters?: EmailFilters): Promise<Email[]> {
     return prisma.email.findMany({
       where: {
         ...(filters?.accountId  && { accountId:  filters.accountId }),
-        ...(filters?.emailType  && { emailType:  filters.emailType as never }),
+        ...(filters?.emailType  && { emailType:  filters.emailType }),
         ...(filters?.sinistreRef && { sinistreRef: filters.sinistreRef }),
       },
       include: { attachments: true },
       orderBy: { receivedAt: 'desc' },
+      take: filters?.limit ?? 50,
+      skip: filters?.offset ?? 0,
     });
   },
 

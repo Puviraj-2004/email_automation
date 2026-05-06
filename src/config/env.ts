@@ -7,6 +7,8 @@ const envSchema = z.object({
   UPLOADS_DIR: z.string().default('./uploads/emails'),
   PUBLIC_BASE_URL: z.string().url(),
   ROBOT_CRON_SCHEDULE: z.string().default('0 * * * *'),
+  API_KEY: z.string().min(24).optional(),
+  CREDENTIAL_ENCRYPTION_KEY: z.string().min(32).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -16,6 +18,17 @@ if (!parsed.success) {
     .map((i) => `  → ${i.path.join('.')}: ${i.message}`)
     .join('\n');
   throw new Error(`\n[Config] Invalid environment variables:\n${issues}\n`);
+}
+
+if (parsed.data.NODE_ENV === 'production') {
+  const missing = [
+    !parsed.data.API_KEY && 'API_KEY',
+    !parsed.data.CREDENTIAL_ENCRYPTION_KEY && 'CREDENTIAL_ENCRYPTION_KEY',
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`[Config] Missing required production variables: ${missing.join(', ')}`);
+  }
 }
 
 export const config = parsed.data;

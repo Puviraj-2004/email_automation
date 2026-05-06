@@ -1,53 +1,43 @@
 import { PrismaClient } from '@prisma/client';
+import { z } from 'zod';
 import { resolveImapConfig } from '../config/imapHosts';
+import { encryptSecret } from '../modules/shared';
 
 const prisma = new PrismaClient();
 
-const accounts = [
-  {
-    label: 'Gonesse',
-    email: 'gonesse@gopservices.fr',
-    password: 'Goness3@201712345',
-  },
-  {
-    label: 'Tesla',
-    email: 'tesla@gopservices.fr',
-    password: '$T3ph@nie201712345',
-  },
-  {
-    label: 'Paris 16',
-    email: 'paris16@gopservices.fr',
-    password: 'Luis@paris16201712345',
-  },
-  {
-    label: 'Garage Ravier',
-    email: 'm.gomes@garage-ravier.fr',
-    password: 'Michel@2017OM',
-  },
-  {
-    label: 'Aguesseau',
-    email: 'aguesseau@gopservices.fr',
-    password: 'Aguesseau@201712345',
-  },
-  {
-    label: 'Bruno Esteves',
-    email: 'bruno.esteves@garage-ravier.fr',
-    password: 'Brunoesteves2017',
-  },
-];
+const seedAccountSchema = z.object({
+  label: z.string().min(1),
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+const seedAccountsSchema = z.array(seedAccountSchema);
+
+function loadSeedAccounts(): z.infer<typeof seedAccountsSchema> {
+  const raw = process.env.SEED_EMAIL_ACCOUNTS_JSON;
+  if (!raw) {
+    console.warn('SEED_EMAIL_ACCOUNTS_JSON is not set. No email accounts were seeded.');
+    return [];
+  }
+
+  const parsedJson = JSON.parse(raw) as unknown;
+  return seedAccountsSchema.parse(parsedJson);
+}
 
 async function main(): Promise<void> {
-  console.log('Seeding email accounts...\n');
+  const accounts = loadSeedAccounts();
+  console.log(`Seeding ${accounts.length} email account(s)...\n`);
 
   for (const account of accounts) {
     try {
       const imapConfig = resolveImapConfig(account.email);
+      const encryptedPassword = encryptSecret(account.password);
 
       await prisma.emailAccount.upsert({
         where: { email: account.email },
         update: {
           label:    account.label,
-          password: account.password,
+          password: encryptedPassword,
           imapHost: imapConfig.host,
           imapPort: imapConfig.port,
           isActive: true,
@@ -55,16 +45,16 @@ async function main(): Promise<void> {
         create: {
           label:    account.label,
           email:    account.email,
-          password: account.password,
+          password: encryptedPassword,
           imapHost: imapConfig.host,
           imapPort: imapConfig.port,
           isActive: true,
         },
       });
 
-      console.log(`✓ ${account.label.padEnd(15)} ${account.email}`);
+      console.log(`Seeded ${account.label.padEnd(15)} ${account.email}`);
     } catch (err) {
-      console.error(`✗ ${account.label.padEnd(15)} ${account.email}`);
+      console.error(`Failed ${account.label.padEnd(15)} ${account.email}`);
       console.error(`  Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }

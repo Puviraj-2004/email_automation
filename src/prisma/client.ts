@@ -12,8 +12,14 @@ if (process.env.NODE_ENV !== 'production') {
   global.__prisma = prisma;
 }
 
-prisma.$connect().then(() => {
-  logger.info('[Prisma] Database connected');
-});
+void prisma.$connect()
+  .then(() => {
+    logger.info('[Prisma] Database connected');
+  })
+  .catch((err: unknown) => {
+    logger.error('[Prisma] Database connection failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 
 export default prisma;

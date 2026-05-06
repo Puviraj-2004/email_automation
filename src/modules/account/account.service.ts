@@ -1,6 +1,6 @@
 import { EmailAccount } from '@prisma/client';
 import { resolveImapConfig } from '../../config/imapHosts';
-import { AppError, ErrorCode, logger } from '../shared';
+import { AppError, ErrorCode, encryptSecret, logger } from '../shared';
 import { accountRepository } from './account.repository';
 import { CreateEmailAccountInput, UpdateEmailAccountInput } from './types';
 
@@ -16,6 +16,7 @@ export const accountService = {
     const imapConfig = resolveImapConfig(input.email);
     const account = await accountRepository.create({
       ...input,
+      password: encryptSecret(input.password),
       imapHost: imapConfig.host,
       imapPort: imapConfig.port,
     });
@@ -41,7 +42,10 @@ export const accountService = {
 
   async update(id: string, input: UpdateEmailAccountInput): Promise<EmailAccount> {
     await accountService.findById(id);
-    const updated = await accountRepository.update(id, input);
+    const updated = await accountRepository.update(id, {
+      ...input,
+      ...(input.password && { password: encryptSecret(input.password) }),
+    });
     logger.info('[AccountService] Updated account', { id });
     return updated;
   },

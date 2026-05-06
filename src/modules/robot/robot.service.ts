@@ -5,7 +5,8 @@ import { accountService } from '../account';
 import { emailService } from '../email';
 import { robotRepository } from './robot.repository';
 
-const DEFAULT_FETCH_DAYS_BACK = 30;
+const MAX_FETCH_DAYS_BACK = 2;
+let isRobotRunning = false;
 
 function daysAgo(days: number): Date {
   const date = new Date();
@@ -15,72 +16,83 @@ function daysAgo(days: number): Date {
 }
 
 async function resolveFetchFrom(accountId: string): Promise<Date> {
+  const oldestAllowedFetchFrom = daysAgo(MAX_FETCH_DAYS_BACK);
   const lastRun = await robotRepository.findLastSuccessfulRun(accountId);
-  if (lastRun) return lastRun.fetchTo;
+  if (lastRun) return lastRun.fetchTo > oldestAllowedFetchFrom ? lastRun.fetchTo : oldestAllowedFetchFrom;
 
   const lastEmailDate = await robotRepository.findLastProcessedEmailDate(accountId);
-  if (lastEmailDate) return lastEmailDate;
+  if (lastEmailDate) return lastEmailDate > oldestAllowedFetchFrom ? lastEmailDate : oldestAllowedFetchFrom;
 
-  return daysAgo(DEFAULT_FETCH_DAYS_BACK);
+  return oldestAllowedFetchFrom;
 }
 
 export const robotService = {
   async runAllAccounts(): Promise<void> {
-    const accounts = await accountService.findAllActive();
-
-    if (accounts.length === 0) {
-      logger.warn('[Robot] No active accounts found');
+    if (isRobotRunning) {
+      logger.warn('[Robot] Run already in progress; skipping overlapping trigger');
       return;
     }
 
-    const now = new Date();
-    let totalFetched = 0;
-    let totalSkipped = 0;
-    let totalFailed  = 0;
+    isRobotRunning = true;
 
-    logger.info(`[Robot] Starting — ${accounts.length} account(s)`);
+    try {
+      const accounts = await accountService.findAllActive();
 
-    for (const account of accounts) {
-      let run = null;
-      try {
-        const fetchFrom = await resolveFetchFrom(account.id);
-        const fetchTo   = now;
+      if (accounts.length === 0) {
+        logger.warn('[Robot] No active accounts found');
+        return;
+      }
 
-        if (fetchTo.getTime() - fetchFrom.getTime() < 60 * 1000) {
-          continue;
-        }
+      const now = new Date();
+      let totalFetched = 0;
+      let totalSkipped = 0;
+      let totalFailed = 0;
 
-        run = await robotRepository.createRun(account.id, fetchFrom, fetchTo);
+      logger.info(`[Robot] Starting - ${accounts.length} account(s)`);
 
-        const { fetched, skipped } = await emailService.processAccount(
-          account.id,
-          fetchFrom,
-          fetchTo,
-        );
+      for (const account of accounts) {
+        let run = null;
+        try {
+          const fetchFrom = await resolveFetchFrom(account.id);
+          const fetchTo = now;
 
-        await robotRepository.completeRun(run.id, 'SUCCESS', fetched, skipped);
+          if (fetchTo.getTime() - fetchFrom.getTime() < 60 * 1000) {
+            continue;
+          }
 
-        totalFetched += fetched;
-        totalSkipped += skipped;
+          run = await robotRepository.createRun(account.id, fetchFrom, fetchTo);
 
-        // Only log if something happened
-        if (fetched > 0 || skipped > 0) {
-          logger.info(`[Robot] ${account.label} — fetched: ${fetched}, skipped: ${skipped}`);
-        }
+          const { fetched, skipped } = await emailService.processAccount(
+            account.id,
+            fetchFrom,
+            fetchTo,
+          );
 
-      } catch (err) {
-        totalFailed++;
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error(`[Robot] ${account.label} failed — ${message}`);
+          await robotRepository.completeRun(run.id, 'SUCCESS', fetched, skipped);
 
-        if (run) {
-          await robotRepository.completeRun(run.id, 'FAILED', 0, 0, message);
+          totalFetched += fetched;
+          totalSkipped += skipped;
+
+          if (fetched > 0 || skipped > 0) {
+            logger.info(`[Robot] ${account.label} - fetched: ${fetched}, skipped: ${skipped}`);
+          }
+        } catch (err) {
+          totalFailed++;
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error(`[Robot] ${account.label} failed - ${message}`);
+
+          if (run) {
+            await robotRepository.completeRun(run.id, 'FAILED', 0, 0, message);
+          }
         }
       }
-    }
 
-    // Single summary line per run
-    logger.info(`[Robot] Done — fetched: ${totalFetched}, skipped: ${totalSkipped}, failed: ${totalFailed}`);
+      logger.info(
+        `[Robot] Done - fetched: ${totalFetched}, skipped: ${totalSkipped}, failed: ${totalFailed}`,
+      );
+    } finally {
+      isRobotRunning = false;
+    }
   },
 
   startScheduler(): void {
@@ -100,6 +112,6 @@ export const robotService = {
       }
     });
 
-    logger.info(`[Robot] Scheduler started — ${schedule}`);
+    logger.info(`[Robot] Scheduler started - ${schedule}`);
   },
 };

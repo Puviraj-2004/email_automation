@@ -11,7 +11,7 @@ export const attachmentService = {
     const uploadDir = buildUploadDirPath(config.UPLOADS_DIR, input.receivedAt);
 
     try {
-      fs.mkdirSync(uploadDir, { recursive: true });
+      await fs.promises.mkdir(uploadDir, { recursive: true });
     } catch {
       throw new AppError(
         ErrorCode.ATTACHMENT_SAVE_FAILED,
@@ -22,11 +22,11 @@ export const attachmentService = {
     const safeFilename = `${formatDateFilename(input.receivedAt)}-${sanitizeFilename(input.filename)}`;
     const filePath = path.join(uploadDir, safeFilename);
     const relativePath = path.relative(process.cwd(), filePath);
-    const dateFolder = formatDateFilename(input.receivedAt).slice(0, 8);
+    const dateFolder = path.basename(uploadDir);
     const publicUrl = `${config.PUBLIC_BASE_URL}/public/emails/documents/${dateFolder}/${safeFilename}`;
 
     try {
-      fs.writeFileSync(filePath, input.content);
+      await fs.promises.writeFile(filePath, input.content);
     } catch {
       throw new AppError(
         ErrorCode.ATTACHMENT_SAVE_FAILED,
